@@ -1,44 +1,64 @@
 <div align="center">
 
-<img src="assets/project-banner.svg" alt="Animated Canopy — Progressive Delivery banner" width="900" />
+<img src="assets/project-banner.svg" alt="Animated progressive delivery rollout" width="900" />
 
-# Canopy — Progressive Delivery
+# Progressive Delivery Control Plane
 
-**Ship in steps. Let service health decide what happens next.**
+**Advance carefully. Pause when signals wobble. Roll back on hard failures.**
 
-Java · Spring Boot · Kubernetes · GitOps
-
-![Project status](https://img.shields.io/badge/status-in%20progress-7a8b71)
+Java 21 · Spring Boot · PostgreSQL · Flyway · Docker
 
 </div>
 
-## Product scope
+A portfolio API for staged software releases. It stores a rollout plan, accepts service health observations, and makes a deterministic advance, pause, or rollback decision with a recorded explanation.
 
-Define a staged rollout, watch service indicators, and record every promotion or rollback decision.
+## Implemented
 
-## Architecture notes
+- POST /api/releases validates an increasing set of traffic percentages ending at 100.
+- POST /api/releases/{id}/start transitions a new release to active.
+- POST /api/releases/{id}/metrics evaluates p95 latency, error rate, and sample volume.
+- Low sample volume or a soft threshold pauses the release; hard thresholds roll it back; healthy metrics advance exactly one configured step.
+- POST /api/releases/{id}/resume resumes paused releases.
+- GET release and evaluation history endpoints, optimistic version field, Postgres/Flyway schema, Actuator health/metrics, Docker Compose.
 
-GitOps-backed desired state; metrics-based analysis gates; policy-driven rollback; immutable release events; role-scoped approvals.
+Default policy in this demo: under 100 samples pauses; error rate >= 5% or p95 >= 1500 ms rolls back; error rate >= 2% or p95 >= 1000 ms pauses. These are sample policy values, not universal SLO recommendations.
 
-### Data model sketch
+## Run
 
-    releases(id, service, artifact, strategy, state) · rollout_steps(release_id, weight, duration) · gate_results(release_id, signal, value, decision)
+```bash
+docker compose up --build
+```
 
-## Stack
+Create a plan and begin rollout:
 
-Java · Spring Boot · Kubernetes · GitOps
+```bash
+curl -X POST http://localhost:8080/api/releases -H 'Content-Type: application/json' \
+  -d '{"service":"checkout","environment":"staging","artifactRef":"sha256:demo-build","rolloutSteps":"5,25,50,100"}'
+curl -X POST http://localhost:8080/api/releases/<release-id>/start
+```
 
-## Build sequence
+Submit an observation:
 
-1. Release and strategy model
-2. Canary state machine
-3. Metrics gates and rollback
-4. GitOps adapter, policy, and audit
+```bash
+curl -X POST http://localhost:8080/api/releases/<release-id>/metrics -H 'Content-Type: application/json' \
+  -d '{"errorRate":0.004,"latencyP95Ms":420,"sampleCount":1500}'
+```
 
-## Current status
+## Decision flow
 
-Public repository with an animated README. Product code is being built incrementally, one project at a time. This page records the planned product boundary and engineering milestones.
+```text
+release plan -> active step -> metric observation -> policy evaluation
+                                          |              +-> next step
+                                          |              +-> pause / resume
+                                          |              +-> rollback state
+                                          +-> immutable evaluation history
+```
+
+## Boundaries
+
+This service records desired traffic percentage and decisions; it does not control Kubernetes, a service mesh, CI/CD, or cloud routing. Metrics are caller-submitted and unauthenticated in this portfolio slice. A production control plane needs workload identity, signed/verified telemetry, environment authorization, audit controls, concurrency/idempotency design, and a deployment adapter with reconciliation.
 
 ## License
 
-MIT.
+MIT. See LICENSE.
+
